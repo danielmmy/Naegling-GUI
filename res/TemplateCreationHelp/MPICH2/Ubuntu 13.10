@@ -1,0 +1,159 @@
+1-Instalar o ubuntu server 13.10 com usuário naegling 
+
+1-Fazer o dowload do versão correta do mpich2. Esta pode ser encotrada no site http://www.mpich.org/downloads/
+$wget http://www.mpich.org/static/tarballs/1.4.1/mpich2-1.4.1.tar.gz
+
+2-Criar a pasta /opt/mpich2 
+$sudo mkdir /opt/mpich2
+
+3-Descompactar o arquivo baixado
+$tar zxvf mpich2-1.4.1.tar.gz
+
+4-Ascender ao diretório criado
+$cd  mpich2-1.4.1
+
+5-instalar o pacote
+$./configure –prefix=/opt/mpich2
+$make
+$sudo make install
+
+6-Editar o path do usuário naegling, anexando no final os seguintes caminhos:
+$vim /home/naegling/.profile
+export PATH=/opt/mpich2/bin:$PATH
+export LD_LIBRARY_PATH=/opt/mpich2/lib:$LD_LIBRARY_PATH
+
+
+7-criar o arquivo “.mpd.conf” e alterar suas permissões de acordo. Substituir   PALAVRASECRETA por uma senha.
+$echo “secretword=PALAVRASECRETA” >> ~/.mpd.conf
+$chmod 600 ~/.mpd.conf
+
+8-criar o arquivo machinefile
+$echo $HOSTNAME > ~/machinefile
+
+9-Realizar a troca de chaves
+$ssh-keygen -t rsa
+$cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+
+10-criar as pastas para NFS
+$sudo mkdir -p /export/mpich2
+$sudo mkdir /export/naegling
+
+11-Configurar o fstab para montar os diretórios a serem exportados.
+$vim /etc/fstab
+/opt/mpich2	/export/mpich2	none	bind	0	2
+/home/naegling	/export/naegling	none	bind	0	3
+
+12-Instalar o servidor NFS e configurar
+$sudo apt-get install nfs-kernel-server
+$sudo vim /etc/exports
+/export xxx.xxx.xxx.0/24(rw,fsid=0,insecure,no_subtree_check,async) 
+/export/mpich2  xxx.xxx.xxx.0/24(rw,nohide,insecure,no_subtree_check,async) 
+/export/naegling xxx.xxx.xxx.0/24(rw,nohide,insecure,no_subtree_check,async) 
+
+
+13-instalar o debootstrap
+$sudo apt-get install debootstrap
+
+
+14-criar um diretório para a imagem a ser gerada
+$sudo mkdir /home/work_nodes
+
+15-criar a imagem. O link deve ser o mesmo utilizado como repositório
+$sudo debootstrap --arch amd64 precise /home/work_nodes http://us.archive.ubuntu.com/ubuntu
+
+
+16-Adicionar um repositório para a imagem
+$sudo vim /home/work_nodes/etc/apt/sources.list
+deb http://us.archive.ubuntu.com/ubuntu precise main restricted universe multiverse
+deb-src http://us.archive.ubuntu.com/ubuntu precise main restricted universe multiverse
+
+17-Ascender à imagem e configurar 
+$sudo chroot /home/work_nodes
+#mount -t proc proc proc
+#export LC_ALL=C
+#apt-get update
+#apt-get install linux-image
+#adduser naegling
+#apt-get install nfs-common openssh-server
+
+18-Apague o arquivo initrd atual
+#rm /boot/initrd.img-3.2.0-23-generic
+
+19-Edite o arquivo initramfs.conf para permitir o boot pela rede. Mude a opção BOOT de local para nfs.
+#nano /etc/initiramfs-tools/initramfs.conf
+BOOT=nfs
+
+20-Gere o novo initrd
+#update-initramfs -u
+
+21-Saia da imagem
+#exit
+
+22-instale os pacotes necessários ao pxe
+$sudo apt-get install dhcp3-server syslinux tftpd-hpa
+
+23-Copie os arquivos initrd e vmlinuz
+$sudo cp /home/work_nodes/boot/initrd.img-3.2.0-23-generic /var/lib/tftpboot/initrd.img
+$sudo cp /home/work_nodes/boot/vmlinuz-3.2.0-23-generic /var/lib/tftpboot/vmlinuz
+Fornecer permissão de leitura:
+$sudo chmod +r /var/lib/tftpboot/vmlinuz
+$sudo chmod +r /var/lib/tftpboot/initrd.img
+
+23-Configure o dhcp para atender na segunda interface(bridge). A primeira interface pertence a reder virtual virNaegling
+$sudo vim /etc/default/isc-dhcp-server
+INTERFACES=“eth1”
+
+
+
+24-Copie o arquivo pxelinux.0
+$sudo cp /usr/lib/syslinux/pxelinux.0 /var/lib/tftpboot
+
+25-Crie o diretório pxelinux.cfg e o arquivo default
+$sudo mkdir /var/lib/tftpboot/pxelinux.cfg
+$sudo vim /var/lib/tftpboot/pxelinux.cfg/default
+DEFAULT linux
+LABEL linux
+KERNEL vmlinuz
+APPEND root=/dev/nfs initrd=initrd.img nfsroot=xxx.xxx.xxx.xxx:/home/work_nodes ip=dhcp rw
+
+
+26-Remova a confirmação de host do ssh
+$sudo vim /etc/ssh/ssh_config
+StrictHostKeyChecking no
+
+
+27-Altere o conteúdo do diretório fstab da imagem
+$sudo vim /home/work_nodes/etc/fstab
+proc             /proc            proc      defaults       0      0
+/dev/nfs       /                    nfs        defaults       0      1
+<HOSTNAME>:/mpich2	/opt/mpich2/  nfs4    _netdev,auto    0	2
+<HOSTNAME>:/naegling	/home/naegling/  nfs4    _netdev,auto    0	3
+no <HOSTNAME> substituir pelo hostname da máquina
+
+28-Crie o diretório mpich2 da imagem
+$sudo mkdir /home/work_nodes/opt/mpich2
+ 
+
+29-Edite o conteudo do arquivo network da  imagem
+$sudo vim /home/work_nodes/etc/network/interface
+auto lo
+iface lo inet loopback
+
+iface eth0 inet manual
+
+30-Apague o conteúdo do arquivo hostname da imagem
+$sudo echo “” > /home/work_nodes/etc/hostname
+
+31-Compilar e instalar o pacote Naegling-MPICH2-Routines-Ubuntu12.04.tar.gz
+$tar zxvf Naegling-MPICH2-Routines-Ubuntu12.04.tar.gz
+$cd Naegling-MPICH2
+$./configure –prefix=/usr
+$make all
+$sudo make install
+
+32-Incluir o daemon naegling nos programas para serem autoexecutados durante o boot.
+$sudo vim /etc/init.d/naegling
+#!/bin/sh
+/usr/bin/naegling
+sudo chmod +x /etc/init.d/naegling
+sudo update-rc.d naegling defaults 99
